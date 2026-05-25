@@ -163,7 +163,7 @@ def stats(_: str = Depends(_auth)):
     saved_g = 0.0
     deferred = 0
     kwh_per_task = 0.01
-    baseline = 200.0
+    baseline = 300.0
 
     for r in rows:
         if r["actual_gco2"] and r["forecast_gco2"]:
