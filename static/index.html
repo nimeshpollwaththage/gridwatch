@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GridWatch</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen font-mono">
+  <div class="max-w-5xl mx-auto p-6 space-y-6">
+
+    <header class="border-b border-gray-800 pb-4">
+      <h1 class="text-2xl font-bold tracking-tight">GridWatch</h1>
+      <p class="text-sm text-gray-500 mt-1">Carbon-aware AI workload scheduler · UK National Grid</p>
+    </header>
+
+    <div class="grid grid-cols-3 gap-4">
+      <div class="bg-gray-900 rounded-lg p-4">
+        <p class="text-xs text-gray-500 uppercase tracking-widest">Grid now</p>
+        <p id="stat-now" class="text-3xl font-bold mt-2">—</p>
+        <p class="text-xs text-gray-600 mt-1">gCO₂/kWh</p>
+      </div>
+      <div class="bg-gray-900 rounded-lg p-4">
+        <p class="text-xs text-gray-500 uppercase tracking-widest">Tasks deferred</p>
+        <p id="stat-deferred" class="text-3xl font-bold mt-2">—</p>
+      </div>
+      <div class="bg-gray-900 rounded-lg p-4">
+        <p class="text-xs text-gray-500 uppercase tracking-widest">CO₂ saved</p>
+        <p id="stat-saved" class="text-3xl font-bold mt-2">—</p>
+        <p class="text-xs text-gray-600 mt-1">grams</p>
+      </div>
+    </div>
+
+    <div class="bg-gray-900 rounded-lg p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-widest mb-4">Schedule a task</p>
+      <div class="space-y-3">
+        <input id="task-desc" type="text" maxlength="500"
+          placeholder="e.g. Research carbon pricing policies and draft a summary"
+          class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-cyan-500">
+        <div class="flex gap-3">
+          <input id="task-deadline" type="datetime-local"
+            class="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-cyan-500">
+          <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+            <input id="task-urgent" type="checkbox" class="accent-cyan-500">
+            Urgent
+          </label>
+          <button onclick="submitTask()"
+            class="bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-4 py-2 rounded transition-colors">
+            Schedule
+          </button>
+        </div>
+        <p id="task-result" class="text-sm text-gray-500 min-h-5"></p>
+      </div>
+    </div>
+
+    <div class="bg-gray-900 rounded-lg p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-widest mb-4">UK Grid Carbon — next 8 hours</p>
+      <canvas id="chart" height="100"></canvas>
+    </div>
+
+    <div class="bg-gray-900 rounded-lg p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-widest mb-4">Recent tasks</p>
+      <div id="tasks" class="space-y-2 text-sm"></div>
+    </div>
+
+  </div>
+
+  <script>
+    const key = new URLSearchParams(location.search).get('key') || '';
+    const h = { 'X-API-Key': key };
+    let chart;
+
+    const badge = s => {
+      const cls = { queued: 'bg-yellow-900 text-yellow-300', done: 'bg-green-900 text-green-300' };
+      return `<span class="px-2 py-0.5 rounded text-xs ${cls[s] || 'bg-gray-800 text-gray-400'}">${s}</span>`;
+    };
+
+    async function loadCarbon() {
+      try {
+        const d = await fetch('/carbon', { headers: h }).then(r => r.json());
+        const now = d.current?.actual ?? d.current?.forecast ?? '—';
+        document.getElementById('stat-now').textContent = now;
+        const slots = d.forecast || [];
+        if (chart && slots.length) {
+          chart.data.labels = slots.map(s => new Date(s.from).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+          chart.data.datasets[0].data = slots.map(s => s.intensity?.forecast ?? null);
+          chart.update();
+        }
+      } catch {}
+    }
+
+    async function loadStats() {
+      try {
+        const d = await fetch('/stats', { headers: h }).then(r => r.json());
+        document.getElementById('stat-deferred').textContent = d.tasks_deferred;
+        document.getElementById('stat-saved').textContent = d.total_co2_saved_grams;
+      } catch {}
+    }
+
+    async function loadTasks() {
+      try {
+        const tasks = await fetch('/tasks', { headers: h }).then(r => r.json());
+        const el = document.getElementById('tasks');
+        if (!tasks.length) { el.innerHTML = '<p class="text-gray-600">No tasks yet.</p>'; return; }
+        el.innerHTML = tasks.slice(0, 10).map(t => `
+          <div class="flex items-start justify-between gap-4 border-b border-gray-800 pb-2">
+            <div class="flex-1 min-w-0">
+              <p class="truncate text-gray-200">${t.description}</p>
+              <p class="text-xs text-gray-600 mt-0.5">
+                window: ${t.scheduled_for ? new Date(t.scheduled_for).toLocaleString() : '—'}
+                ${t.forecast_gco2 ? ` · ${t.forecast_gco2} gCO₂/kWh forecast` : ''}
+                ${t.actual_gco2   ? ` · ${t.actual_gco2} gCO₂/kWh actual` : ''}
+              </p>
+            </div>
+            ${badge(t.status)}
+          </div>`).join('');
+      } catch {}
+    }
+
+    async function submitTask() {
+      const desc     = document.getElementById('task-desc').value.trim();
+      const deadline = document.getElementById('task-deadline').value;
+      const urgent   = document.getElementById('task-urgent').checked;
+      const out      = document.getElementById('task-result');
+      if (!desc)     { out.textContent = 'Enter a task description.'; return; }
+      if (!deadline) { out.textContent = 'Pick a deadline.'; return; }
+      out.textContent = 'Scheduling...';
+      try {
+        const r = await fetch('/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+          body: JSON.stringify({ description: desc, deadline: new Date(deadline).toISOString(), urgency_override: urgent })
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Error');
+        out.textContent = d.message + (d.forecast_gco2 ? ` · ${d.forecast_gco2} gCO₂/kWh` : '');
+        out.className = 'text-sm text-green-400 min-h-5';
+        document.getElementById('task-desc').value = '';
+        loadTasks(); loadStats();
+      } catch (e) {
+        out.textContent = e.message;
+        out.className = 'text-sm text-red-400 min-h-5';
+      }
+    }
+
+    function initChart() {
+      chart = new Chart(document.getElementById('chart').getContext('2d'), {
+        type: 'line',
+        data: { labels: [], datasets: [{ data: [], borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,0.08)', borderWidth: 2, pointRadius: 2, tension: 0.3, fill: true }] },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#6b7280', font: { size: 10 } }, grid: { color: '#1f2937' } },
+            y: { ticks: { color: '#6b7280', font: { size: 10 } }, grid: { color: '#1f2937' } }
+          }
+        }
+      });
+    }
+
+    initChart();
+    Promise.all([loadCarbon(), loadStats(), loadTasks()]);
+    setInterval(() => Promise.all([loadCarbon(), loadStats(), loadTasks()]), 60000);
+  </script>
+</body>
+</html>
