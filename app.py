@@ -166,11 +166,12 @@ def stats(_: str = Depends(_auth)):
     baseline = 300.0
 
     for r in rows:
-        if r["actual_gco2"] and r["forecast_gco2"]:
+        if r["forecast_gco2"] is not None:
+            deferred += 1
+        if r["actual_gco2"]:
             gain = (baseline - r["actual_gco2"]) * kwh_per_task
             if gain > 0:
                 saved_g += gain
-                deferred += 1
 
     return {
         "total_tasks": len(rows),
